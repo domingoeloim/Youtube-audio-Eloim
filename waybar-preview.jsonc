@@ -1,0 +1,29 @@
+{
+  "layer": "top",
+  "position": "bottom",
+  "height": 42,
+  "spacing": 8,
+  "modules-center": [
+    "custom/youtube-audio",
+    "custom/youtube-pip"
+  ],
+  "custom/youtube-audio": {
+    "exec": "yt-audio status",
+    "return-type": "json",
+    "interval": 2,
+    "format": "{text}",
+    "tooltip": true,
+    "on-click": "yt-audio play",
+    "on-click-right": "yt-audio toggle",
+    "on-click-middle": "yt-audio stop",
+    "on-scroll-up": "yt-audio volume +5",
+    "on-scroll-down": "yt-audio volume -5"
+  },
+  "custom/youtube-pip": {
+    "exec": "yt-audio pip-button",
+    "return-type": "json",
+    "format": "{text}",
+    "tooltip": true,
+    "on-click": "yt-audio pip"
+  }
+}

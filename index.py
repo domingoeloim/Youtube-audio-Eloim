@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import math
 import os
 import re
 import shutil
@@ -60,8 +61,13 @@ def _read_response(sock: socket.socket, request_id: int) -> dict:
     raise PlayerError("La réponse IPC mpv dépasse la taille maximale.")
 
 
-def ipc(command: list, *, missing_ok: bool = False) -> dict | None:
-    path = socket_path()
+def ipc(
+    command: list,
+    *,
+    missing_ok: bool = False,
+    ipc_path: Path | None = None,
+) -> dict | None:
+    path = ipc_path or socket_path()
     request_id = time.monotonic_ns() & 0x7FFFFFFF
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
@@ -92,8 +98,8 @@ def ipc(command: list, *, missing_ok: bool = False) -> dict | None:
     return response
 
 
-def get_property(name: str):
-    response = ipc(["get_property", name])
+def get_property(name: str, *, ipc_path: Path | None = None):
+    response = ipc(["get_property", name], ipc_path=ipc_path)
     return response.get("data") if response else None
 
 
@@ -137,11 +143,18 @@ def _tail_log(path: Path) -> str:
         return ""
 
 
-def start_player(query: str, *, pip: bool) -> None:
-    path = socket_path()
+def start_player(
+    query: str,
+    *,
+    pip: bool,
+    start_time: float | None = None,
+    paused: bool = False,
+    ipc_path: Path | None = None,
+) -> None:
+    path = ipc_path or socket_path()
     if path.exists():
         if path.is_socket():
-            response = ipc(["get_property", "pause"], missing_ok=True)
+            response = ipc(["get_property", "pause"], missing_ok=True, ipc_path=path)
             if response is not None:
                 raise PlayerError("mpv est déjà en cours. Arrêtez la lecture avant d'en lancer une autre.")
             path.unlink()
@@ -160,7 +173,9 @@ def start_player(query: str, *, pip: bool) -> None:
         mpv,
         "--no-terminal",
         "--ytdl=yes",
-        "--ytdl-format=best" if pip else "--ytdl-format=bestaudio/best",
+        "--ytdl-format=bestvideo[height<=720]+bestaudio/best[height<=720]"
+        if pip
+        else "--ytdl-format=bestaudio/best",
         f"--input-ipc-server={path}",
         f"--title={PIP_TITLE}" if pip else "--title=YouTube Audio",
     ]
@@ -174,6 +189,10 @@ def start_player(query: str, *, pip: bool) -> None:
         )
     else:
         arguments.extend(["--no-video", "--force-window=no"])
+    if start_time is not None:
+        arguments.append(f"--start={start_time:.3f}")
+    if paused:
+        arguments.append("--pause=yes")
     arguments.append(url)
 
     log = log_path()
@@ -197,7 +216,7 @@ def start_player(query: str, *, pip: bool) -> None:
             raise PlayerError(f"{message}\n{details}" if details else message)
         if path.exists():
             try:
-                response = ipc(["get_property", "pause"], missing_ok=True)
+                response = ipc(["get_property", "pause"], missing_ok=True, ipc_path=path)
             except PlayerError:
                 response = None
             if response is not None:
@@ -215,25 +234,153 @@ def start_player(query: str, *, pip: bool) -> None:
     raise PlayerError(f"{message}\n{details}" if details else message)
 
 
-def play(query: str | None, *, pip: bool) -> None:
+def play(query: str | None, *, pip: bool, replace_active: bool = False) -> None:
     if query is None:
         query = choose_query()
-    if query:
-        start_player(query, pip=pip)
+    if not query:
+        return
 
+    if replace_active:
+        path = socket_path()
+        if path.exists() and not path.is_socket():
+            raise PlayerError(f"Le chemin IPC existe mais n'est pas un socket : {path}")
+        if path.is_socket() and ipc(["get_property", "pause"], missing_ok=True) is not None:
+            ipc(["loadfile", media_url(query), "replace"])
+            return
+
+    start_player(query, pip=pip)
+
+
+def is_youtube_url(value: str) -> bool:
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme in ("http", "https") and (
+        host == "youtu.be" or host.endswith(".youtu.be")
+        or host == "youtube.com" or host.endswith(".youtube.com")
+    )
+
+
+def seek(seconds: int) -> None:
+    ipc(["seek", seconds, "relative+exact"])
+
+
+def _playback_position(ipc_path: Path) -> float:
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        for property_name in ("time-pos", "playback-time"):
+            response = ipc(
+                ["get_property", property_name],
+                missing_ok=True,
+                ipc_path=ipc_path,
+            )
+            value = response.get("data") if response else None
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            ):
+                return max(0.0, float(value))
+        time.sleep(0.1)
+    raise PlayerError(
+        "mpv ne fournit pas encore la position de lecture ; réessaie dans quelques secondes."
+    )
+
+
+def _wait_for_player_exit(ipc_path: Path, *, timeout: float = START_TIMEOUT) -> None:
+    deadline = time.monotonic() + timeout
+    while ipc_path.exists() and time.monotonic() < deadline:
+        if not ipc_path.is_socket():
+            raise PlayerError(f"Le chemin IPC mpv n'est plus un socket : {ipc_path}")
+        if ipc(
+            ["get_property", "pause"],
+            missing_ok=True,
+            ipc_path=ipc_path,
+        ) is None:
+            ipc_path.unlink(missing_ok=True)
+            return
+        time.sleep(0.05)
+    if ipc_path.exists():
+        raise PlayerError(f"mpv répond encore sur son socket après la demande d'arrêt : {ipc_path}")
+
+
+def _wait_for_video(ipc_path: Path) -> None:
+    deadline = time.monotonic() + START_TIMEOUT
+    while time.monotonic() < deadline:
+        response = ipc(
+            ["get_property", "vid"],
+            missing_ok=True,
+            ipc_path=ipc_path,
+        )
+        video_track = response.get("data") if response else None
+        if isinstance(video_track, int) and not isinstance(video_track, bool) and video_track > 0:
+            return
+        time.sleep(0.1)
+    raise PlayerError("mpv n'a pas chargé de piste vidéo pour cette URL.")
+
+
+def switch_to_pip() -> None:
+    path = socket_path()
+    if not path.exists():
+        raise PlayerError("Aucune lecture mpv en cours à basculer en PiP.")
+
+    media_path = get_property("path")
+    if not isinstance(media_path, str) or not is_youtube_url(media_path):
+        raise PlayerError("La lecture en cours n'est pas une URL YouTube identifiable.")
+
+    position = _playback_position(path)
+    paused = get_property("pause")
+    if not isinstance(paused, bool):
+        raise PlayerError("mpv n'a pas fourni l'état pause/reprise de la vidéo.")
+
+    pip_path = path.with_name(
+        f"{SOCKET_NAME}.pip-{os.getpid()}-{time.monotonic_ns()}"
+    )
+    try:
+        start_player(
+            media_path,
+            pip=True,
+            start_time=position,
+            paused=True,
+            ipc_path=pip_path,
+        )
+        _wait_for_video(pip_path)
+    except PlayerError as error:
+        if pip_path.is_socket():
+            ipc(["quit"], missing_ok=True, ipc_path=pip_path)
+            _wait_for_player_exit(pip_path)
+        raise PlayerError(
+            f"{error}\nLa lecture audio en cours a été conservée."
+        ) from error
+
+    ipc(["quit"], ipc_path=path)
+    _wait_for_player_exit(path)
+    try:
+        os.replace(pip_path, path)
+    except OSError as error:
+        ipc(["quit"], missing_ok=True, ipc_path=pip_path)
+        _wait_for_player_exit(pip_path)
+        try:
+            start_player(media_path, pip=False, start_time=position, paused=paused)
+        except PlayerError as recovery_error:
+            raise PlayerError(
+                f"Impossible d'activer le socket PiP : {error}\n"
+                f"La lecture audio n'a pas pu être rétablie : {recovery_error}"
+            ) from recovery_error
+        raise PlayerError(
+            f"Impossible d'activer le socket PiP : {error}\nLa lecture audio a été rétablie."
+        ) from error
 
 def status() -> dict:
     path = socket_path()
     if not path.exists():
-        return {
-            "text": "♫ YouTube",
-            "tooltip": "Aucune lecture. Clic gauche : choisir une vidéo.",
-            "class": "stopped",
-        }
+        return stopped_status()
     if not path.is_socket():
         raise PlayerError(f"Le chemin IPC existe mais n'est pas un socket : {path}")
 
-    paused = bool(get_property("pause"))
+    response = ipc(["get_property", "pause"], missing_ok=True)
+    if response is None:
+        return stopped_status()
+    paused = bool(response.get("data"))
     title = get_property("media-title") or "YouTube"
     title = re.sub(r"[\x00-\x1f\x7f]+", " ", str(title))
     title = re.sub(r"\s+", " ", title).strip() or "YouTube"
@@ -243,6 +390,16 @@ def status() -> dict:
         "text": f"{icon} {html.escape(display_title)}",
         "tooltip": f"{'En pause' if paused else 'Lecture'} : {html.escape(title)}",
         "class": "paused" if paused else "playing",
+        "title": title,
+    }
+
+
+def stopped_status() -> dict:
+    return {
+        "text": "♫ YouTube",
+        "tooltip": "Aucune lecture. Clic gauche : choisir une vidéo.",
+        "class": "stopped",
+        "title": "",
     }
 
 
@@ -266,8 +423,18 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         command = subparsers.add_parser(action, help=description)
         command.add_argument("query", nargs="?", help="URL ou recherche YouTube")
+        if action == "play":
+            command.add_argument(
+                "--replace",
+                action="store_true",
+                dest="replace_active",
+                help="Remplacer la lecture mpv en cours",
+            )
     subparsers.add_parser("toggle", help="Mettre en pause ou reprendre")
     subparsers.add_parser("stop", help="Arrêter la lecture")
+    seek_parser = subparsers.add_parser("seek", help="Avancer ou reculer dans la lecture")
+    seek_parser.add_argument("seconds", type=int, help="Décalage en secondes, ex. -30 ou 30")
+    subparsers.add_parser("pip-current", help="Basculer la lecture courante en vidéo PiP")
     volume = subparsers.add_parser("volume", help="Modifier le volume")
     volume.add_argument("delta", type=int, help="Variation en pourcentage, ex. +5 ou -5")
     subparsers.add_parser("status", help="Afficher l'état pour Waybar")
@@ -279,13 +446,17 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.action == "play":
-            play(args.query, pip=False)
+            play(args.query, pip=False, replace_active=args.replace_active)
         elif args.action == "pip":
             play(args.query, pip=True)
         elif args.action == "toggle":
             ipc(["cycle", "pause"])
         elif args.action == "stop":
             ipc(["quit"], missing_ok=True)
+        elif args.action == "seek":
+            seek(args.seconds)
+        elif args.action == "pip-current":
+            switch_to_pip()
         elif args.action == "volume":
             ipc(["add", "volume", args.delta])
         elif args.action == "status":

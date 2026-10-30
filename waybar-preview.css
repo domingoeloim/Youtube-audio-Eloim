@@ -1,0 +1,39 @@
+* {
+  font-family: sans-serif;
+  font-size: 14px;
+  min-height: 0;
+}
+
+window#waybar {
+  background: rgba(18, 18, 24, 0.96);
+  color: #e6e6ef;
+}
+
+#custom-youtube-audio,
+#custom-youtube-pip {
+  margin: 5px 3px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: #292936;
+}
+
+#custom-youtube-audio.playing {
+  color: #a6e3a1;
+}
+
+#custom-youtube-audio.paused {
+  color: #f9e2af;
+}
+
+#custom-youtube-audio.stopped {
+  color: #bac2de;
+}
+
+#custom-youtube-pip {
+  color: #89b4fa;
+}
+
+#custom-youtube-audio:hover,
+#custom-youtube-pip:hover {
+  background: #3b3b4a;
+}

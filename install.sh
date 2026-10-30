@@ -17,12 +17,6 @@ for dependency in mpv yt-dlp; do
     fi
 done
 
-if ! command -v wofi >/dev/null 2>&1 && ! command -v rofi >/dev/null 2>&1; then
-    printf '%s\n' "Erreur : installez wofi ou rofi pour choisir des vidéos depuis Waybar." >&2
-    printf '%s\n' "Arch : sudo pacman -S --needed wofi" >&2
-    exit 1
-fi
-
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SOURCE="$SCRIPT_DIR/index.py"
 
