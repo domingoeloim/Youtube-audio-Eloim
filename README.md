@@ -23,10 +23,6 @@ Après avoir installé les dépendances, ajoutez le dépôt comme plugin Omarchy
 ```sh
 omarchy plugin add https://github.com/OWNER/omarchy-youtube-audio.git
 ```
-
-Remplacez `OWNER` par le nom du compte GitHub qui publie le dépôt. Le plugin
-est ajouté désactivé afin de pouvoir vérifier son code, puis activez-le :
-
 ```sh
 omarchy plugin enable maeder.youtube-audio
 ```
