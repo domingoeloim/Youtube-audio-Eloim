@@ -165,6 +165,7 @@ Ui.BarWidget {
     bar: root.bar
     owner: root
     open: root.opened
+    focusable: true
     margin: Commons.Style.gapsOut
     padding: Commons.Style.space(14)
     contentWidth: playerPanel.fittedContentWidth(Commons.Style.space(360))
@@ -229,6 +230,12 @@ Ui.BarWidget {
           selectByMouse: true
           onAccepted: root.playUrl(text)
           onTextEdited: root.errorMessage = ""
+          Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)) {
+              root.pasteClipboard()
+              event.accepted = true
+            }
+          }
         }
 
         Rectangle {
@@ -244,7 +251,7 @@ Ui.BarWidget {
           id: clipboardButton
           width: Commons.Style.space(38)
           anchors.top: parent.top
-          anchors.right: parent.right
+          anchors.right: playButton.left
           anchors.bottom: parent.bottom
 
           Icon {
@@ -262,6 +269,53 @@ Ui.BarWidget {
             cursorShape: Qt.PointingHandCursor
             onClicked: root.pasteClipboard()
           }
+        }
+
+        Rectangle {
+          width: 1
+          height: parent.height * 0.55
+          anchors.right: playButton.left
+          anchors.verticalCenter: parent.verticalCenter
+          color: Commons.Color.popups.border
+          opacity: 0.55
+        }
+
+        Ui.BorderSurface {
+          id: playButton
+          width: Commons.Style.space(38)
+          anchors.top: parent.top
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          color: Commons.Style.controlFill(false, playMouse.containsMouse, Commons.Color.popups.text, Commons.Color.accent)
+          borderSpec: Commons.Border.controlSpec(
+            playMouse.containsMouse ? "hover-cursor" : "normal",
+            Commons.Color.popups.text,
+            Commons.Color.accent
+          )
+          radius: Commons.Style.cornerRadius
+          opacity: searchField.text.trim() !== "" && !actionProcess.running ? 1 : 0.45
+
+          Icon {
+            anchors.centerIn: parent
+            width: Commons.Style.space(20)
+            height: width
+            kind: "play"
+            pixelSize: Commons.Style.space(17)
+            color: Commons.Color.popups.text
+          }
+
+          MouseArea {
+            id: playMouse
+            anchors.fill: parent
+            enabled: searchField.text.trim() !== "" && !actionProcess.running
+            hoverEnabled: true
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: root.playUrl(searchField.text)
+          }
+
+          ToolTip.visible: playMouse.containsMouse
+          ToolTip.text: "Lancer la lecture audio"
+          ToolTip.delay: 450
         }
       }
 

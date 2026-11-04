@@ -44,9 +44,10 @@ omarchy plugin enable maeder.youtube-audio
   en se repositionnant selon le côté de la barre.
 - La fenêtre mesure 360 × 210 px (avant mise à l'échelle Omarchy), apparaît en
   fondu et se ferme quand le clic est fait à l'extérieur.
-- Collez ou saisissez une URL YouTube, puis appuyez sur Entrée pour lancer
-  l'audio. Une nouvelle URL remplace la lecture en cours ; le panneau reste
-  ouvert après le lancement.
+- Collez ou saisissez une URL YouTube (Ctrl+V ou l'icône presse-papiers), puis
+  appuyez sur Entrée ou cliquez sur le bouton Lecture à droite du champ pour
+  lancer l'audio. Une nouvelle URL remplace la lecture en cours ; le panneau
+  reste ouvert après le lancement.
 - Le titre défile si nécessaire. Les commandes reculent de 30 secondes,
   lecture/pause, avancent de 30 secondes et basculent la lecture courante en
   fenêtre vidéo PiP en conservant sa position. Le PiP recherche une piste vidéo
